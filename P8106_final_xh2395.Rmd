@@ -1,0 +1,167 @@
+---
+title: "P8106_final_xh2395"
+author: "Xin  He"
+date: "5/10/2020"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = F)
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(ranger)
+library(gbm)
+```
+
+## Import the data
+
+```{r}
+wine_df = read_csv("./data/winequality_red.csv")
+
+wine_df = wine_df %>%
+  mutate(quality = ifelse(quality %in% c(3,4,5), "low", "high")) %>% 
+  rename(fixed_acidity = `fixed acidity`,
+         volatile_acidity = `volatile acidity`,
+         citric_acid = `citric acid`,
+         residual_sugar =`residual sugar`,
+         free_sulfur_dioxide = `free sulfur dioxide`,
+         total_sulfur_dioxide =`total sulfur dioxide`)
+```
+
+## Set train data and test data
+
+```{r}
+trRows = createDataPartition(wine_df$quality, p = .75, list = F)
+
+train_df = wine_df[trRows,]
+
+test_df = wine_df[-trRows,]
+```
+
+```{r}
+train_df$quality = factor(train_df$quality, c("low", "high"))
+```
+
+## Fit a classification tree to the training data
+
+```{r}
+set.seed(2020)
+
+ctrl = trainControl(method = "repeatedcv",
+                    summaryFunction = twoClassSummary,
+                    classProbs = TRUE)
+
+tree_fit = train(quality~.,
+                 data = train_df,
+                 method = "rpart",
+                 tuneGrid = data.frame(cp = exp(seq(-15, 0, by = 2))),
+                 trControl = ctrl,
+                 metric = "ROC"
+                 )
+```
+
+## summary
+
+```{r}
+tree_fit$bestTune
+
+tree_fit$finalModel$cptable
+```
+
+## plot
+```{r}
+plot(tree_fit, xTrans = function(x)log(x), xlab = "log(cp)")
+
+ggplot(tree_fit, highlight = T)
+
+rpart.plot(tree_fit$finalModel)
+```
+
+## Predict the response on the test data
+
+```{r}
+tree.pred = predict(tree_fit, newdata = test_df, type = "raw")
+1 - sum(tree.pred == test_df$quality) / length(test_df$quality)
+```
+
+27.31%
+
+## Random forests
+
+```{r}
+set.seed(2020)
+
+rf.grid = expand.grid(mtry = 2:7,
+                      splitrule = "gini",
+                      min.node.size = seq(20, 120, by = 10))
+
+rf_fit = train(quality~.,
+                 data = train_df,
+                 method = "ranger",
+                 tuneGrid = rf.grid,
+                 metric = "ROC",
+                 trControl = ctrl,
+                 importance = "impurity")
+```
+
+## Plot
+
+```{r}
+ggplot(rf_fit, highlight = T)
+```
+
+## Predict the response on the test data
+
+```{r}
+rf.pred = predict(rf_fit, newdata = test_df, type = "raw")
+
+1 - sum(rf.pred == test_df$quality) / length(test_df$quality)
+```
+
+20.30%
+
+## Boosting
+
+```{r, cache=TRUE}
+set.seed(2020)
+
+gbm.grid = expand.grid(n.trees = seq(100, 600, by = 10),
+                       interaction.depth = 2:6,
+                       shrinkage = c(0.001, 0.003, 0.005),
+                       n.minobsinnode = 1)
+
+gbm_fit = train(quality~.,
+                data = train_df,
+                method = "gbm",
+                trControl = ctrl,
+                distribution = "bernoulli",
+                metric = "ROC",
+                tuneGrid = gbm.grid,
+                verbose = F
+                )
+```
+
+## Plot
+
+```{r}
+ggplot(gbm_fit, highlight = T)
+```
+
+## Predict the response on the test data
+
+```{r}
+gbm.pred = predict(gbm_fit, newdata = test_df, type = "raw")
+
+1 - sum(gbm.pred == test_df$quality) / length(test_df$quality)
+```
+
+25.06%
+
+
+
+
+
+
