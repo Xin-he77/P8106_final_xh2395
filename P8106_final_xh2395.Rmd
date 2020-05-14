@@ -22,7 +22,7 @@ library(gbm)
 wine_df = read_csv("./data/winequality_red.csv")
 
 wine_df = wine_df %>%
-  mutate(quality = ifelse(quality %in% c(3,4,5), "low", "high")) %>% 
+  mutate(quality = ifelse(quality %in% c(3,4,5,6), "low", "high")) %>% 
   rename(fixed_acidity = `fixed acidity`,
          volatile_acidity = `volatile acidity`,
          citric_acid = `citric acid`,
@@ -87,7 +87,24 @@ tree.pred = predict(tree_fit, newdata = test_df, type = "raw")
 1 - sum(tree.pred == test_df$quality) / length(test_df$quality)
 ```
 
-27.31%
+13.03%
+
+## Variable importance
+
+```{r}
+set.seed(2020)
+
+rf2_final_per = ranger(quality~., train_df,
+                       mtry = 3,
+                       min.node.size = 5,
+                       splitrule = "gini",
+                       importance = "permutation",
+                       scale.permutation.importance = TRUE)
+
+barplot(sort(ranger::importance(rf2_final_per), decreasing = FALSE),
+        las = 2, horiz = TRUE, cex.names = 0.7,
+        col = colorRampPalette(colors = c("cyan","blue"))(8))
+```
 
 ## Random forests
 
@@ -121,7 +138,7 @@ rf.pred = predict(rf_fit, newdata = test_df, type = "raw")
 1 - sum(rf.pred == test_df$quality) / length(test_df$quality)
 ```
 
-20.30%
+12.03%
 
 ## Boosting
 
@@ -158,7 +175,7 @@ gbm.pred = predict(gbm_fit, newdata = test_df, type = "raw")
 1 - sum(gbm.pred == test_df$quality) / length(test_df$quality)
 ```
 
-25.06%
+11.53%
 
 
 

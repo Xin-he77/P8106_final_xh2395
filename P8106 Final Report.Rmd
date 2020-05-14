@@ -1,0 +1,417 @@
+---
+title: "P8106 Final Report"
+author: "Xin He (xh2395), Ziqi Zhou (zz2701), Ziyi Zhao (zz2603)"
+date: "5/13/2020"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+    fig.align = 'center',
+    message = F,
+    warning = F,
+    echo = T
+ )
+
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(ranger)
+library(gbm)
+library(MASS)
+library(mlbench)
+library(e1071)
+library(factoextra)
+library(RColorBrewer)
+library(gridExtra)
+library(gplots)
+library(corrplot)
+library(patchwork)
+library(glmnet)
+library(pROC)
+library(AppliedPredictiveModeling)
+```
+
+# Introduction
+
+Once viewed as a luxury good, nowadays red wine is increasingly enjoyed by a wider range of consumers, including our teammates. We noticed that the price and quality of differnet brands of red wine differ. We are interested in investigating what chemical elements of red wine are related to its quality. 
+
+We focused on a dataset named "Red Wine Quality", which is related to the Portuguese "Vinho Verde" wine. It includes information about different chemical elements of red wine and its quality score. The dataset is composed of 12 variables and 1599 observations. There is no missing data in our dataset. Among the 12 variables, we chose "quality" as our outome variable and the other 11 variables as predict variables. The outcome variable "quality" is based on sensory data and scored between 0 and 10. High quality was defined as the quality score ≥ 6.5. Low quality was defined as quality score < 6.5. The 11 predict variables are fixed acidity, volatile acidity, citric acid, residual sugar, chlorides, free sulfur dioxide, total sulfur dioxide, density, pH, sulphates and alcohol.
+
+We are trying to build different models to answer the question that what is the relationship between 11 chemical elements of red wine and the quality score of red wine. We seperated the full dataset into a train dataset and a test dataset. The train dataset includes 1200 observations. The test dataset includes 399 observations. 
+
+```{r, include = FALSE}
+## Set random seed
+set.seed(2020)
+## Import the data 1
+wine_df = read_csv("./data/winequality_red.csv")
+## Clean the data 1
+wine_df = wine_df %>%
+  mutate(quality = ifelse(quality %in% c(3,4,5,6), "low", "high")) %>% 
+  rename(fixed_acidity = `fixed acidity`,
+         volatile_acidity = `volatile acidity`,
+         citric_acid = `citric acid`,
+         residual_sugar =`residual sugar`,
+         free_sulfur_dioxide = `free sulfur dioxide`,
+         total_sulfur_dioxide =`total sulfur dioxide`)
+## Set train data and test data 1
+trRows = createDataPartition(wine_df$quality, p = .75, list = F)
+train_df = wine_df[trRows,]
+test_df = wine_df[-trRows,]
+## Set quality as a factor variable 1
+train_df$quality = factor(train_df$quality, c("low", "high"))
+## Import and clean data 2
+wine = read_csv("./data/winequality_red.csv") %>% janitor::clean_names()
+
+wine = as.data.frame(wine)
+
+wine = wine %>% mutate(quality_ind = if_else(quality>6.5,"good","bad"))
+
+row_name = rep(0,dim(wine)[1])
+for (i in 1:dim(wine)[1]) {
+  row_name[i] <- paste0("redwine_",i)
+}
+
+rownames(wine) <- row_name
+
+dat <- wine[,1:11]
+## Import and clean data 3
+wine_3 = read_csv("./data/winequality_red.csv") %>% 
+  janitor::clean_names() %>% 
+  na.omit() %>% 
+  as.data.frame() %>% 
+  mutate(quality = as.factor(quality))
+## Set train data and test data 3
+trRows3 = createDataPartition(wine_3$quality, p = .75, list = F)
+train_data = wine_3[trRows3,]
+test_data = wine_3[-trRows3,]
+```
+
+# Exploratory analysis/visualization
+
+## Correlation plot
+
+```{r, echo = FALSE,fig.height=3.5}
+wine_m = read_csv("./data/winequality_red.csv") %>% 
+  janitor::clean_names() %>% 
+  na.omit() 
+
+set.seed(2020)
+trRows_m = createDataPartition(wine$quality, p = .75, list = F)
+
+x1 = model.matrix(quality ~ .,wine_m)[trRows_m,-1]
+
+corrplot(cor(x1), method = "square", type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45, sig.level = 0.01, insig = "blank",number.font = 5)
+```
+
+In the correlation plot, the blue means that two variables are positively correlated; the red means that two variable are negatively correlated. The darker they are, more correlated they are. We could find in this plot that the fixed acidity and citric acidity are highly positive correlated. Fixed acidity is highly positive correlated with density. Volatile_acidity is negative correlated with fixed acidity and citric acidity. What's more the pH is negative correlated with fixed acidity and citric acidity. It is easy to interpret since the pH is describes how acidic or basic a wine is. The factors might influence each other somehow.
+
+## Cluster analysis (heatmap)
+
+```{r, include = FALSE}
+# K-means clustering
+fviz_nbclust(dat,
+             FUNcluster = kmeans,
+             method = "silhouette")
+
+set.seed(7)
+km <- kmeans(dat,centers = 2,nstart = 25)
+
+km_vis <- fviz_cluster(list(data=dat,cluster=km$cluster),
+                       ellipse.type = "convex",
+                       geom = c("point","text"),
+                       labelsize = 8,
+                       palette="Dark2")+ labs(title = "K-means")
+
+km_vis
+```
+
+```{r, include = FALSE}
+# Hierarchical clustering
+## heatmap
+col1 <- colorRampPalette(brewer.pal(9,"GnBu"))(500)
+col2 <- colorRampPalette(brewer.pal(3,"Spectral"))(2)
+
+heatmap.2(t(dat),
+          col=col1,keysize=.8,key.par=list(cex=.5),
+          trace="none",key=TRUE,cexCol=0.75,
+          labCol=as.character(rownames(wine)),
+          ColSideColors=col2[as.numeric(
+            relevel(factor(wine[,"quality_ind"]),ref="bad"))+1],
+          margins=c(10,10))
+
+heatmap.2(t(dat[,-(6:7)]),
+          col=col1,keysize=.8,key.par=list(cex=.5),
+          trace="none",key=TRUE,cexCol=0.75,
+          labCol=as.character(rownames(wine)),
+          ColSideColors=col2[as.numeric(
+            relevel(factor(wine[,"quality_ind"]),ref="bad"))+1],
+          margins=c(10,10))
+```
+
+```{r, echo = FALSE}
+perc.rank <- function(x) trunc(rank(x))/length(x)
+
+dat1 <- dat %>% mutate(fixed_acidity=perc.rank(fixed_acidity),
+                       volatile_acidity=perc.rank(volatile_acidity),
+                       citric_acid = perc.rank(citric_acid),
+                       residual_sugar = perc.rank(residual_sugar),
+                       chlorides = perc.rank(chlorides),
+                       free_sulfur_dioxide=perc.rank(free_sulfur_dioxide),
+                       total_sulfur_dioxide=perc.rank(total_sulfur_dioxide),
+                       density=perc.rank(density),
+                       p_h=perc.rank(p_h),
+                       sulphates=perc.rank(sulphates),
+                       alcohol=perc.rank(alcohol))
+
+heatmap.2(t(dat1),
+          col=col1,keysize=.8,key.par=list(cex=.5),
+          trace="none",key=TRUE,cexCol=0.75,
+          labCol=as.character(rownames(dat1)),
+          ColSideColors=col2[as.numeric(
+            relevel(factor(wine[,"quality_ind"]),ref="bad"))+1],
+          margins=c(10,10))
+
+```
+
+We got a plot with more variation in color. From the dendrogram at top and heatmap below, we can see "good" wines always have relatively high rank of alcohol, citric acid, fixed acidity, and sulphate. Wines with high percentile of sulfur dioxide and volatile acidity may not be considered as "good" wines. The patterns of residual sugar, density, and chlorides are not very clear, because some "good" wines have high percentile but he others have relatatively smaller percentile.  
+
+# Models
+
+## Logistic regression
+
+We fit the training data with logistic, regularized logistic, linear discriminant analysis (LDA), and quadratic discriminant analysis (QDA). 
+
+```{r, include = FALSE}
+# Fit a logistic regression 
+dat2 <- wine[,-12]
+
+set.seed(1)
+rowTrain <- createDataPartition(y=dat2$quality_ind,
+                                p = 3/4,
+                                list = FALSE)
+
+ctrl2 <- trainControl(method = "repeatedcv",
+                      repeats = 5,
+                      summaryFunction = twoClassSummary,
+                      classProbs = TRUE)
+
+set.seed(1)
+model.glm <- train(x = dat2[rowTrain,1:11],
+                   y = dat2$quality_ind[rowTrain],
+                   method = "glm",
+                   metric = "ROC",
+                   trControl = ctrl2)
+
+# fit regularized logistic regression 
+glmnGrid <- expand.grid(.alpha = seq(0,1,length = 6),
+                        .lambda = exp(seq(-8,-2,length = 20)))
+
+set.seed(1)
+model.glmn <- train(x = dat2[rowTrain,1:11],
+                    y = dat2$quality_ind[rowTrain],
+                    method = "glmnet",
+                    tuneGrid = glmnGrid,
+                    metric = "ROC",
+                    trControl = ctrl2)
+
+# fit LDA 
+set.seed(1)
+model.lda <- train(x = dat2[rowTrain,1:11],
+                   y = dat2$quality_ind[rowTrain],
+                   method = "lda",
+                   metric = "ROC",
+                   trControl = ctrl2)
+
+# Fit qda 
+set.seed(1)
+model.qda <- train(x = dat2[rowTrain,1:11],
+                   y = dat2$quality_ind[rowTrain],
+                   method = "qda",
+                   metric = "ROC",
+                   trControl = ctrl2)
+
+# do prediction on test data
+lda_pred <- predict(model.lda,
+                    newdata = dat2[-rowTrain,1:11],
+                    type = "prob")
+
+glm_pred <- predict(model.glm, 
+                    newdata = dat2[-rowTrain,1:11],
+                    type = "prob")
+
+glmn_pred <- predict(model.glmn,
+                     newdata = dat2[-rowTrain,1:11],
+                     type = "prob")
+
+qda_pred <- predict(model.qda,
+                    newdata = dat2[-rowTrain,1:11],
+                    type = "prob")
+
+# ROC
+roc.lda <- roc(dat2$quality_ind[-rowTrain],
+               controls = lda_pred$bad,
+               cases = lda_pred$good)
+
+roc.glm <- roc(dat2$quality_ind[-rowTrain],
+               controls = glm_pred$bad,
+               cases = glm_pred$good)
+
+roc.glmn <- roc(dat2$quality_ind[-rowTrain],
+                controls = glmn_pred$bad,
+                cases = glmn_pred$good)
+
+roc.qda <- roc(dat2$quality_ind[-rowTrain],
+               controls = qda_pred$bad,
+               cases = qda_pred$good)
+
+auc <- c(roc.glm$auc[1],roc.glmn$auc[1],roc.lda$auc[1],
+         roc.qda$auc[1])
+```
+
+```{r, echo = FALSE, fig.height=3.5}
+plot(roc.glm,legacy.axes = TRUE)
+plot(roc.glmn,col = 2, add = TRUE)
+plot(roc.lda,col = 3, add = TRUE)
+plot(roc.qda, col = 4, add = TRUE)
+modelNames <- c("glm", "glmn", "lda", "qda")
+legend("bottomright", legend = paste0(modelNames,": ", round(auc,3)),
+       col = 1:4, lwd = 2)
+```
+
+From the summary and graph above, we can find out that the logistics and regularized logistic regression model has better ROC curves and AUC values.
+
+## Classification tree 
+
+```{r, include = FALSE}
+set.seed(2020)
+
+ctrl = trainControl(method = "repeatedcv",
+                    summaryFunction = twoClassSummary,
+                    classProbs = TRUE)
+
+tree_fit = train(quality~.,
+                 data = train_df,
+                 method = "rpart",
+                 tuneGrid = data.frame(cp = exp(seq(-15, 0, by = 2))),
+                 trControl = ctrl,
+                 metric = "ROC"
+                 )
+```
+
+```{r, echo = FALSE, fig.height=4}
+rpart.plot(tree_fit$finalModel)
+```
+
+**Variable importance**
+
+```{r, include = FALSE}
+set.seed(2020)
+
+rf2_final_per = ranger(quality~., train_df,
+                       mtry = 3,
+                       min.node.size = 5,
+                       splitrule = "gini",
+                       importance = "permutation",
+                       scale.permutation.importance = TRUE)
+
+barplot(sort(ranger::importance(rf2_final_per), decreasing = FALSE),
+        las = 2, horiz = TRUE, cex.names = 0.7,
+        col = colorRampPalette(colors = c("cyan","blue"))(8))
+```
+
+In this model, the variable importance alcohol > sulphates > density > volatile acidity > total sulfur dioxide > chlorides > fixed acidity > citric acid > residual sugar > pH > free sulfur dioxide. Alcohol is the most important variable when predicting red wine quality. 
+
+## Random forests
+
+```{r, include = FALSE}
+set.seed(2020)
+
+rf.grid = expand.grid(mtry = 2:7,
+                      splitrule = "gini",
+                      min.node.size = seq(20, 120, by = 10))
+
+rf_fit = train(quality~.,
+                 data = train_df,
+                 method = "ranger",
+                 tuneGrid = rf.grid,
+                 metric = "ROC",
+                 trControl = ctrl,
+                 importance = "impurity")
+```
+
+```{r, echo = FALSE, fig.height=4}
+ggplot(rf_fit, highlight = T)
+```
+
+## Boosting
+
+```{r, include = FALSE}
+set.seed(2020)
+
+gbm.grid = expand.grid(n.trees = seq(100, 600, by = 10),
+                       interaction.depth = 2:6,
+                       shrinkage = c(0.001, 0.003, 0.005),
+                       n.minobsinnode = 1)
+
+gbm_fit = train(quality~.,
+                data = train_df,
+                method = "gbm",
+                trControl = ctrl,
+                distribution = "bernoulli",
+                metric = "ROC",
+                tuneGrid = gbm.grid,
+                verbose = F
+                )
+```
+
+```{r, echo = FALSE, fig.height=4}
+ggplot(gbm_fit, highlight = T)
+```
+
+## Linear Kernel
+
+```{r, echo = FALSE, fig.height=4}
+ctrl3 <- trainControl(method = "cv")
+
+set.seed(1)
+svml.fit <- train(quality~., 
+                  data = train_data, 
+                  method = "svmLinear2",
+                  preProcess = c("center", "scale"),
+                  tuneGrid = data.frame(cost = exp(seq(-5,0,len=20))),
+                  trControl = ctrl3)
+
+ggplot(svml.fit, highlight = TRUE)
+```
+
+## Radial Kernel
+
+```{r, echo = FALSE, fig.height=4}
+svmr.grid <- expand.grid(C = exp(seq(-1,4,len=10)),
+                         sigma = exp(seq(-2,-0,len=10)))
+
+set.seed(1)             
+svmr.fit <- train(quality~., wine_3, 
+                  subset = trRows3,
+                  method = "svmRadial",
+                  preProcess = c("center", "scale"),
+                  tuneGrid = svmr.grid,
+                  trControl = ctrl3)
+
+ggplot(svmr.fit, highlight = TRUE)
+```
+
+# Conclusions
+
+Alcohol is the most important variable when predicting red wine quality. The logistic regression and regularized logistic regression model has better ROC curves and AUC values, comparing to linear discriminant analysis and quadratic discriminant analysis. Classification tree, random forest and boosting are not good models for the red wine quality data. Linear kernal and radial kernel are more appropriate than classification tree for this data. 
+
+
+
+
+
+
+
+
